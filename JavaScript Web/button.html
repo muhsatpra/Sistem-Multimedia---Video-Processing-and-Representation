@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Video Recorder</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--glass:rgba(255,255,255,0.04)}
+    body{font-family:Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(135deg,#071025 0%, #0b1220 100%);color:#e6eef6;margin:0;padding:24px;display:flex;align-items:center;justify-content:center;height:100vh}
+    .container{display:flex;gap:20px;max-width:900px;width:100%}
+    .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 20px rgba(2,6,23,0.6);flex:1}
+    h2{margin:8px 0 12px;font-size:16px;color:var(--muted)}
+    .preview-area{display:flex;flex-direction:column;align-items:center;gap:12px}
+    video{background:var(--glass);border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
+    .controls{display:flex;gap:10px;align-items:center}
+    .button{background:linear-gradient(180deg,var(--accent),#0286a0);padding:10px 14px;border-radius:10px;color:#042b31;text-decoration:none;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(6,182,212,0.12);transition:transform .12s ease,box-shadow .12s ease;user-select:none}
+    .button.secondary{background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.04);font-weight:600}
+    .button:active{transform:translateY(1px)}
+    .button[disabled]{opacity:.5;cursor:not-allowed;transform:none}
+    #downloadButton{display:inline-block}
+    #log{margin-top:12px;color:var(--muted);font-size:13px}
+    .status{font-size:13px;padding:6px 10px;border-radius:8px;background:rgba(255,255,255,0.02);color:var(--muted)}
+    .footer{margin-top:12px;display:flex;justify-content:space-between;align-items:center}
+    @media(max-width:720px){.container{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card preview-area">
+      <div style="width:100%;display:flex;justify-content:space-between;align-items:center">
+        <strong>Preview</strong>
+        <div class="status" id="status">Idle</div>
+      </div>
+      <video id="preview" width="320" height="240" autoplay muted playsinline></video>
+      <div class="controls" style="width:100%;justify-content:space-between">
+        <div style="display:flex;gap:8px">
+          <button id="startButton" class="button">Start Recording</button>
+          <button id="stopButton" class="button secondary" disabled>Stop</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="status" id="timer">00:00</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Recording</strong>
+        <div class="status" id="recIndicator" style="color:#ffd1d1">Not recording</div>
+      </div>
+      <video id="recording" width="320" height="240" controls></video>
+      <div class="footer">
+        <a id="downloadButton" class="button" href="#" download="RecordedVideo.webm">Download</a>
+        <div id="log" style="color:var(--muted)">Ready</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Lightweight UI helpers (does not replace existing recording logic)
+    const start = document.getElementById('startButton');
+    const stop = document.getElementById('stopButton');
+    const status = document.getElementById('status');
+    const recIndicator = document.getElementById('recIndicator');
+    const timerLabel = document.getElementById('timer');
+    const preview = document.getElementById('preview');
+    const recording = document.getElementById('recording');
+    const downloadButton = document.getElementById('downloadButton');
+    const log = document.getElementById('log');
+    let timer = null, secs = 0;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    
+    async function initCamera(){
+      if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+        log.textContent = 'Camera not supported in this browser';
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+        preview.srcObject = stream;
+        log.textContent = 'Webcam connected';
+        
+        // Initialize MediaRecorder
+        const options = {mimeType: 'video/webm'};
+        if(!MediaRecorder.isTypeSupported(options.mimeType)){
+          options.mimeType = 'video/webm;codecs=vp9';
+        }
+        if(!MediaRecorder.isTypeSupported(options.mimeType)){
+          options.mimeType = 'video/webm;codecs=vp8';
+        }
+        mediaRecorder = new MediaRecorder(stream, options);
+        mediaRecorder.ondataavailable = (e) => {
+          if(e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, {type: 'video/webm'});
+          const url = URL.createObjectURL(blob);
+          recording.src = url;
+          downloadButton.href = url;
+          downloadButton.download = 'RecordedVideo.webm';
+          log.textContent = 'Video ready to download';
+        };
+      } catch (err) {
+        log.textContent = 'Unable to access webcam/microphone';
+        console.error(err);
+      }
+    }
+    function setRecordingState(on){
+      start.disabled = on;
+      stop.disabled = !on;
+      status.textContent = on ? 'Recording...' : 'Idle';
+      recIndicator.textContent = on ? '● Recording' : 'Not recording';
+      recIndicator.style.color = on ? '#ff7b7b' : 'var(--muted)';
+      if(on){
+        recordedChunks = [];
+        if(mediaRecorder) mediaRecorder.start();
+        secs=0;
+        timerLabel.textContent='00:00';
+        timer = setInterval(()=>{
+          secs++;
+          const m = String(Math.floor(secs/60)).padStart(2,'0');
+          const s = String(secs%60).padStart(2,'0');
+          timerLabel.textContent = `${m}:${s}`;
+        },1000);
+      } else {
+        if(mediaRecorder) mediaRecorder.stop();
+        clearInterval(timer);
+        timer = null;
+      }
+    }
+    initCamera();
+    // Try to keep UI in sync with external videoRecording.js by dispatching simple custom events
+    start.addEventListener('click',()=>{setRecordingState(true); window.dispatchEvent(new CustomEvent('uiStart'))});
+    stop.addEventListener('click',()=>{setRecordingState(false); window.dispatchEvent(new CustomEvent('uiStop'))});
+    // Listen to events from recording script if it emits them
+    window.addEventListener('recording-start',()=>setRecordingState(true));
+    window.addEventListener('recording-stop',()=>setRecordingState(false));
+  </script>
+
+  <script src="videoRecording.js"></script>
+</body>
+</html>
